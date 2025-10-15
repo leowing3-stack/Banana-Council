@@ -5,16 +5,15 @@
   <title>Banana Council — Chimp Judge (Mobile)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <style>
-    :root { --safe-bot: env(safe-area-inset-bottom, 0px); }
     html, body { height: 100%; margin: 0; background:#0f0f12; }
     .wrap {
       width: 100vw; height: 100vh;
       display: grid; place-items: center;
       overflow: hidden;
-      touch-action: none; /* prevent browser gestures */
+      touch-action: none; /* we manage scrolling/gestures */
     }
     #game {
-      width: 100vw; height: auto;      /* scale to phone width */
+      width: 100vw; height: auto;
       max-height: 100vh;
       image-rendering: pixelated;
       border: 2px solid #2a2a33;
@@ -23,9 +22,9 @@
     /* On-screen buttons */
     .controls {
       position: fixed; left: 0; right: 0; bottom: 0;
-      padding: calc(10px + var(--safe-bot));
+      padding: 10px;
       display: flex; justify-content: space-between; gap: 12px;
-      pointer-events: none; /* children re-enable */
+      pointer-events: none;
     }
     .btn {
       pointer-events: auto;
@@ -38,27 +37,11 @@
       color: #eaeaf6; font: 18px/1 monospace;
     }
     .btn:active { background: rgba(0,0,0,0.75); }
-
-    /* “Tap the mandem” message */
-    .header-message {
-      position: fixed;
-      top: 10px; left: 50%;
-      transform: translateX(-50%);
-      background: rgba(255,255,255,0.95);
-      color: #111;
-      font: 14px monospace;
-      padding: 4px 10px;
-      border-radius: 6px;
-      border: 2px solid rgba(0,0,0,0.2);
-      user-select: none;
-    }
   </style>
 </head>
 <body>
   <div class="wrap">
     <canvas id="game" width="136" height="88" aria-label="Chimp Judge"></canvas>
-
-    <div class="header-message">Tap the mandem</div>
 
     <div class="controls" aria-hidden="false">
       <div class="btn" id="btn-left">◀</div>
@@ -67,32 +50,30 @@
   </div>
 
   <script>
-  // -------------------- ASSET MAP (per-frame images) -------------------------
+  // ---------- ASSETS (per-frame sequences) ----------
   const ASSETS = {
     bg: 'assets/backgrounds/courtroom.png',
     sfx: 'assets/sfx/fart.wav',
-    chimpIdle: (i)=>`assets/characters/chimp/chimp_npc_idle/${i}.png`,   // 0..3
-    moleIdle:  (i)=>`assets/characters/mole/mole_npc_idle/${i}.png`,     // 0..3
-    judgeIdle: (i)=>`assets/characters/judge_idle/${i}.png`,             // 0..3
-    judgeWalk: (i)=>`assets/characters/judge_walk/${i}.png`,             // 0..5
-    judgeFart: (i)=>`assets/characters/judge_fart/${i}.png`              // 0..4
+    chimpIdle: (i)=>`assets/characters/chimp/chimp_npc_idle/${i}.png`,  // 0..3
+    moleIdle:  (i)=>`assets/characters/mole/mole_npc_idle/${i}.png`,    // 0..3
+    judgeIdle: (i)=>`assets/characters/judge/judge_idle/${i}.png`,      // 0..3
+    judgeWalk: (i)=>`assets/characters/judge/judge_walk/${i}.png`,      // 0..5
+    judgeFart: (i)=>`assets/characters/judge/judge_fart/${i}.png`       // 0..4
   };
   const COUNTS = { chimpIdle:4, moleIdle:4, judgeIdle:4, judgeWalk:6, judgeFart:5 };
 
+  // ---------- Canvas / world ----------
   const FRAME_W = 64, FRAME_H = 64;
-  const SPRITE_SCALE = 0.75; // smaller characters
+  const SPRITE_SCALE = 0.75;            // smaller characters
+  const SPEED = 0.14;                    // pixels per ms (slow walk across)
+  const PROMPT_RADIUS = 16;              // when close enough to show nameplate
+  const FART_MS = 350;
 
-  // -------------------- Canvas / sizing -------------------------------------
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
   let GROUND_Y = canvas.height - 1;
 
-  // Gameplay tuning
-  const SPEED = 0.25;              // slower walk speed
-  const PROMPT_RADIUS = 14;        // distance to interact
-  const FART_MS = 350;
-
-  // -------------------- Input (touch + mouse) -------------------------------
+  // ---------- Input ----------
   const hold = { left:false, right:false };
   function bindHold(el, key){
     const on = ()=>hold[key]=true, off=()=>hold[key]=false;
@@ -106,10 +87,8 @@
   bindHold(document.getElementById('btn-left'), 'left');
   bindHold(document.getElementById('btn-right'),'right');
 
-  // Tap on canvas to interact with NPC in range
   canvas.addEventListener('touchstart', handleTap, {passive:false});
   canvas.addEventListener('mousedown',  (e)=>handleTap(mouseToCanvas(e)));
-
   function mouseToCanvas(e){
     const r=canvas.getBoundingClientRect();
     const sx=canvas.width/r.width, sy=canvas.height/r.height;
@@ -126,7 +105,7 @@
     if (e.preventDefault) e.preventDefault();
   }
 
-  // -------------------- Loaders ---------------------------------------------
+  // ---------- Loaders ----------
   function loadImage(src){
     return new Promise(res=>{
       const img=new Image();
@@ -146,11 +125,8 @@
 
   const Images = {
     bg:null,
-    chimpIdle:null,
-    moleIdle:null,
-    judgeIdle:null,
-    judgeWalk:null,
-    judgeFart:null
+    chimpIdle:null, moleIdle:null,
+    judgeIdle:null, judgeWalk:null, judgeFart:null
   };
   let fartAudio = loadAudio(ASSETS.sfx);
 
@@ -170,29 +146,30 @@
     requestAnimationFrame(loop);
   })();
 
-  // -------------------- Entities --------------------------------------------
+  // ---------- Entities ----------
   const player = { x: 0, y: 0, facing: 1, state:'idle', until:0, anim:0 };
-  const chimp  = { x: 0, y: 0, anim:0 };
-  const mole   = { x: 0, y: 0, anim:0 };
+  const chimp  = { x: 0, y: 0, anim:0, label:'James Coyne' };
+  const mole   = { x: 0, y: 0, anim:0, label:'James Holland' };
 
   function placeEntities(){
-    player.x = canvas.width/2; player.y = GROUND_Y;
-    chimp.x  = Math.max(20, canvas.width*0.25);  chimp.y = GROUND_Y;
-    mole.x   = Math.min(canvas.width-20, canvas.width*0.75);  mole.y = GROUND_Y;
+    // keep NPCs just inside the edges
+    const dw = Math.round(FRAME_W * SPRITE_SCALE);
+    const margin = Math.max(6, Math.floor(dw/2) + 2);
+    chimp.x = margin;            chimp.y = GROUND_Y;
+    mole.x  = canvas.width - margin; mole.y  = GROUND_Y;
+    player.x = canvas.width / 2; player.y = GROUND_Y;
   }
 
   function distX(a,b){ return Math.abs(a.x - b.x); }
   function facingToward(from, to){ return (to.x < from.x) ? -1 : 1; }
 
-  // -------------------- Animation helpers (scaled) ---------------------------
+  // ---------- Draw helpers (scaled) ----------
   function drawFrame(img, x, y, facing){
     if (!img) return;
     const dw = Math.round(FRAME_W * SPRITE_SCALE);
     const dh = Math.round(FRAME_H * SPRITE_SCALE);
     ctx.save();
-    if (facing === -1){
-      ctx.translate(x,0); ctx.scale(-1,1); x = 0;
-    }
+    if (facing === -1){ ctx.translate(x,0); ctx.scale(-1,1); x = 0; }
     ctx.drawImage(img, x - dw/2, y - dh, dw, dh);
     ctx.restore();
   }
@@ -202,7 +179,23 @@
     drawFrame(seq[idx], x, y, facing);
   }
 
-  // -------------------- Game loop -------------------------------------------
+  // ---------- Nameplate (small; shown only for active NPC) ----------
+  function drawNamePlate(x, y, text){
+    const dh = Math.round(FRAME_H * SPRITE_SCALE);
+    const w = Math.max(60, text.length * 6.2);
+    const h = 14;
+    const top = y - dh - 6;
+    ctx.fillStyle = 'rgba(255,255,255,0.98)';
+    ctx.fillRect(x - w/2, top - h, w, h);
+    ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+    ctx.strokeRect(x - w/2, top - h, w, h);
+    ctx.fillStyle = '#111';
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(text, x, top - 3);
+  }
+
+  // ---------- Loop ----------
   let last = 0;
   function loop(ts){
     const dt = (ts - last) || 16.67; last = ts;
@@ -213,8 +206,9 @@
       else { player.state = 'idle'; }
     }
 
-    const margin = (FRAME_W * SPRITE_SCALE) * 0.4;
-    player.x = Math.max(margin, Math.min(canvas.width - margin, player.x));
+    // keep the player inside the scene
+    const half = Math.round((FRAME_W * SPRITE_SCALE) / 2);
+    player.x = Math.max(half, Math.min(canvas.width - half, player.x));
 
     if (player.state === 'fart' && performance.now() > player.until){ player.state = 'idle'; }
 
@@ -225,41 +219,31 @@
   }
 
   function render(){
+    // background
     if (Images.bg) ctx.drawImage(Images.bg, 0, 0, canvas.width, canvas.height);
     else { ctx.fillStyle = '#1d1f29'; ctx.fillRect(0,0,canvas.width,canvas.height); }
 
+    // NPCs
     if (Images.chimpIdle) drawSeq(Images.chimpIdle, chimp.anim, chimp.x, chimp.y, 1, 140);
-    if (Images.moleIdle) drawSeq(Images.moleIdle, mole.anim, mole.x, mole.y, 1, 140);
+    if (Images.moleIdle)  drawSeq(Images.moleIdle,  mole.anim,  mole.x,  mole.y, 1, 140);
 
+    // Player
     if (player.state === 'walk' && Images.judgeWalk){
-      drawSeq(Images.judgeWalk, player.anim, player.x, player.y, player.facing, 110);
+      drawSeq(Images.judgeWalk, player.anim, player.x, player.y, player.facing, 120);
     } else if (player.state === 'fart' && Images.judgeFart){
       drawSeq(Images.judgeFart, player.anim, player.x, player.y, player.facing, 90);
     } else if (Images.judgeIdle){
       drawSeq(Images.judgeIdle, player.anim, player.x, player.y, player.facing, 140);
     } else {
+      // fallback placeholder
       ctx.fillStyle = '#8338EC'; ctx.fillRect(player.x-22, player.y-60, 44, 60);
       ctx.fillStyle = '#e7e7e7'; ctx.fillRect(player.x-22, player.y-66, 44, 6);
     }
 
-    // White name labels
-    drawNamePlate(chimp.x, chimp.y, "James Coyne");
-    drawNamePlate(mole.x,  mole.y,  "James Holland");
-  }
-
-  function drawNamePlate(x, y, text){
-    const dh = Math.round(FRAME_H * SPRITE_SCALE);
-    const w = Math.max(80, text.length * 7.2);
-    const h = 18;
-    const top = y - dh - 8;
-    ctx.fillStyle = 'rgba(255,255,255,0.98)';
-    ctx.fillRect(x - w/2, top - h, w, h);
-    ctx.strokeStyle = 'rgba(0,0,0,0.35)';
-    ctx.strokeRect(x - w/2, top - h, w, h);
-    ctx.fillStyle = '#111';
-    ctx.font = '12px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText(text, x, top - 4);
+    // Context nameplate: only for the nearest NPC within range
+    const active = closestInRange();
+    if (active === chimp)  drawNamePlate(chimp.x, chimp.y, chimp.label);
+    if (active === mole)   drawNamePlate(mole.x,  mole.y,  mole.label);
   }
 
   function closestInRange(){
@@ -270,18 +254,16 @@
     return near.reduce((a,b)=> Math.abs(player.x-a.x) < Math.abs(player.x-b.x) ? a : b);
   }
 
-  // -------------------- Interaction -----------------------------------------
+  // ---------- Interaction ----------
   function tryInteract(cx, cy){
     const target = closestInRange();
     if (!target) return;
 
     const halfW = Math.round((FRAME_W * SPRITE_SCALE) / 2);
-    const topY  = target.y - Math.round(FRAME_H * SPRITE_SCALE);
-    const bottomY = target.y;
-
+    const topY  = GROUND_Y - Math.round(FRAME_H * SPRITE_SCALE);
     const within =
       (cx >= target.x - halfW) && (cx <= target.x + halfW) &&
-      (cy >= topY) && (cy <= bottomY);
+      (cy >= topY) && (cy <= GROUND_Y);
 
     if (!within) return;
 

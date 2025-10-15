@@ -1,255 +1,259 @@
-
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Chimp Judge — Mobile</title>
+  <title>Banana Council — Chimp Judge (Mobile)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <style>
-    :root { --ui-safe: env(safe-area-inset-bottom, 0px); }
+    :root { --safe-bot: env(safe-area-inset-bottom, 0px); }
     html, body { height: 100%; margin: 0; background:#0f0f12; }
-    /* Center the game; canvas scales to device width while preserving the background's aspect */
     .wrap {
       width: 100vw; height: 100vh;
       display: grid; place-items: center;
       overflow: hidden;
-      touch-action: none; /* we manage touch */
+      touch-action: none; /* prevent browser gestures */
     }
     #game {
-      image-rendering: pixelated;  /* crispy pixels */
-      image-rendering: crisp-edges;
-      width: 100vw; height: auto;  /* scale to screen width */
+      width: 100vw; height: auto;      /* scale to phone width */
       max-height: 100vh;
+      image-rendering: pixelated;
       border: 2px solid #2a2a33;
-      background: #1c1c25;
+      background:#1c1c25;
     }
-    /* Touch zones: left / right movers stacked over the canvas */
+    /* On-screen buttons */
     .controls {
-      position: fixed; inset: 0; pointer-events: none; /* let taps pass unless we enable */
+      position: fixed; left: 0; right: 0; bottom: 0;
+      padding: calc(10px + var(--safe-bot));
+      display: flex; justify-content: space-between; gap: 12px;
+      pointer-events: none; /* children re-enable */
     }
-    .zone {
-      position: absolute; top: 0; bottom: 0; width: 34%;
-      pointer-events: auto; /* active for touch */
+    .btn {
+      pointer-events: auto;
+      user-select: none;
+      width: 32vw; max-width: 200px; aspect-ratio: 1.6 / 1;
+      background: rgba(0,0,0,0.55);
+      border: 2px solid rgba(255,255,255,0.15);
+      border-radius: 12px;
+      display: grid; place-items: center;
+      color: #eaeaf6; font: 18px/1 monospace;
     }
-    .zone.left  { left: 0; }
-    .zone.right { right: 0; }
-    /* Middle zone isn’t needed—tap directly on the NPC to fart */
-
-    /* Minimal mobile hint */
+    .btn:active { background: rgba(0,0,0,0.75); }
     .hint {
       position: fixed; left: 50%; transform: translateX(-50%);
-      bottom: calc(8px + var(--ui-safe));
+      bottom: calc(70px + var(--safe-bot));
       background: rgba(0,0,0,0.6);
-      color: #cfcfe7; font: 12px/1.2 monospace; padding: 6px 8px; border-radius: 6px;
+      color: #cfcfe7; font: 12px monospace; padding: 6px 8px; border-radius: 6px;
       user-select: none;
     }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <canvas id="game" width="136" height="88" aria-label="Chimp Judge Game"></canvas>
-    <!-- Full-screen control overlay -->
-    <div class="controls" aria-hidden="true">
-      <div class="zone left"></div>
-      <div class="zone right"></div>
+    <canvas id="game" width="136" height="88" aria-label="Chimp Judge"></canvas>
+
+    <div class="hint">Hold ◀ ▶ to walk • When close, <b>tap the NPC</b> to fart.</div>
+
+    <div class="controls" aria-hidden="false">
+      <div class="btn" id="btn-left">◀</div>
+      <div class="btn" id="btn-right">▶</div>
     </div>
-    <div class="hint">Hold left/right side to walk • When close, <b>tap the character</b> to… uh… administer justice.</div>
   </div>
 
   <script>
-  // ====== ASSET PATHS (upload to these exact locations) ======================
+  // -------------------- ASSET MAP (per-frame images) -------------------------
   const ASSETS = {
-    bg: 'assets/backgrounds/courtroom.png',          // your 136×88 (or any) courtroom image
-    sfx: 'assets/sfx/fart.wav',                       // short sound
-    sprites: {
-      judge: {
-        idle: 'assets/characters/judge/judge_idle.png',           // 4 frames, 64×64
-        walk: 'assets/characters/judge/judge_walk.png',           // 6 frames
-        crouch_fart_left: 'assets/characters/judge/judge_fart_left.png' // 3 frames (right mirrored)
-      },
-      chimpNpcIdle: 'assets/characters/chimp_npc_idle.png',       // 4 frames, 64×64
-      moleNpcIdle:  'assets/characters/mole_npc_idle.png'         // 4 frames, 64×64
-    }
+    bg: 'assets/backgrounds/courtroom.png',
+    sfx: 'assets/sfx/fart.wav',
+    chimpIdle: (i)=>`assets/characters/chimp/chimp_npc_idle/${i}.png`,   // 0..3
+    moleIdle:  (i)=>`assets/characters/mole/mole_npc_idle/${i}.png`,     // 0..3
+    judgeIdle: (i)=>`assets/characters/judge_idle/${i}.png`,             // 0..3
+    judgeWalk: (i)=>`assets/characters/judge_walk/${i}.png`,             // 0..5
+    judgeFart: (i)=>`assets/characters/judge_fart/${i}.png`              // 0..4
   };
+  const COUNTS = { chimpIdle:4, moleIdle:4, judgeIdle:4, judgeWalk:6, judgeFart:5 };
 
-  // ====== CANVAS / WORLD SETUP ==============================================
+  // Recommended sprite frame size
+  const FRAME_W = 64, FRAME_H = 64;
+
+  // -------------------- Canvas / sizing -------------------------------------
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
 
-  // Render scale will be handled by CSS; canvas internal size uses background size.
-  const FRAME_W = 64, FRAME_H = 64;          // sprite frame size (recommended)
-  const SPEED = 0.5;                          // world units per ms (tuned for small bg)
-  let   GROUND_Y = canvas.height - 6;         // bottom of background is the ground (adjusted once bg loads)
-  const PROMPT_RADIUS = 14;                   // distance (in background pixels) to show prompt
+  // Ground = bottom of the background image; set after bg loads.
+  let GROUND_Y = canvas.height - 1;
+
+  // Movement / gameplay tuning (background is small; values are in bg pixels/ms)
+  const SPEED = 0.5;              // walk speed
+  const PROMPT_RADIUS = 14;       // distance to show "tap" prompt
   const FART_MS = 350;
 
-  // ====== INPUT (touch) ======================================================
-  const zones = {
-    left:  document.querySelector('.zone.left'),
-    right: document.querySelector('.zone.right')
-  };
-  const Hold = { left:false, right:false };
-  const setHold = (side, v) => { Hold[side] = v; };
-  const touchOn = (el, down) => {
-    const start = (e)=>{ down(true); e.preventDefault(); };
-    const end   = (e)=>{ down(false); e.preventDefault(); };
-    el.addEventListener('touchstart', start, {passive:false});
-    el.addEventListener('touchend',   end,   {passive:false});
-    el.addEventListener('touchcancel',end,   {passive:false});
-  };
-  touchOn(zones.left,  v=>setHold('left',v));
-  touchOn(zones.right, v=>setHold('right',v));
+  // -------------------- Input (touch + mouse) -------------------------------
+  const hold = { left:false, right:false };
+  function bindHold(el, key){
+    const on = ()=>hold[key]=true, off=()=>hold[key]=false;
+    el.addEventListener('touchstart', (e)=>{on(); e.preventDefault();}, {passive:false});
+    el.addEventListener('touchend',   (e)=>{off(); e.preventDefault();}, {passive:false});
+    el.addEventListener('touchcancel',(e)=>{off(); e.preventDefault();}, {passive:false});
+    el.addEventListener('mousedown',  (e)=>{on(); e.preventDefault();});
+    el.addEventListener('mouseup',    (e)=>{off(); e.preventDefault();});
+    el.addEventListener('mouseleave', (e)=>{off();});
+  }
+  bindHold(document.getElementById('btn-left'), 'left');
+  bindHold(document.getElementById('btn-right'),'right');
 
-  // Tap on canvas to interact (we’ll detect NPC hit)
-  canvas.addEventListener('touchstart', onTap, {passive:false});
-  function onTap(e){
-    const t = e.changedTouches[0];
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width  / rect.width;
-    const scaleY = canvas.height / rect.height;
-    const cx = (t.clientX - rect.left) * scaleX;
-    const cy = (t.clientY - rect.top)  * scaleY;
+  // Tap on canvas to interact with NPC in range
+  canvas.addEventListener('touchstart', handleTap, {passive:false});
+  canvas.addEventListener('mousedown',  (e)=>handleTap(mouseToCanvas(e)));
+
+  function mouseToCanvas(e){
+    const r=canvas.getBoundingClientRect();
+    const sx=canvas.width/r.width, sy=canvas.height/r.height;
+    return {clientX:e.clientX, clientY:e.clientY, _sx:sx, _sy:sy, _rect:r};
+  }
+  function handleTap(e){
+    const t = e.changedTouches ? e.changedTouches[0] : e;
+    const rect = t._rect || canvas.getBoundingClientRect();
+    const sx   = t._sx   || (canvas.width/rect.width);
+    const sy   = t._sy   || (canvas.height/rect.height);
+    const cx = (t.clientX - rect.left) * sx;
+    const cy = (t.clientY - rect.top)  * sy;
     tryInteract(cx, cy);
-    e.preventDefault();
+    if (e.preventDefault) e.preventDefault();
   }
 
-  // ====== LOADERS ============================================================
-  function loadImage(src){ return new Promise(res=>{ const img=new Image(); img.onload=()=>res(img); img.onerror=()=>res(null); img.src=src; }); }
-  function loadAudio(src){ try{ const a=new Audio(src); return a; }catch(_){ return null; } }
+  // -------------------- Loaders ---------------------------------------------
+  function loadImage(src){
+    return new Promise(res=>{
+      const img=new Image();
+      img.onload=()=>res(img);
+      img.onerror=()=>res(null);
+      img.src=src;
+    });
+  }
+  async function loadSeq(builder, count){
+    const out=[];
+    for(let i=0;i<count;i++) out.push(await loadImage(builder(i)));
+    return out.every(Boolean) ? out : null;
+  }
+  function loadAudio(src){
+    try{ return new Audio(src); }catch(_){ return null; }
+  }
 
-  const Images = { bg:null, judge:{idle:null,walk:null,fart:null}, chimp:null, mole:null };
+  const Images = {
+    bg:null,
+    chimpIdle:null,   // frame arrays
+    moleIdle:null,
+    judgeIdle:null,
+    judgeWalk:null,
+    judgeFart:null
+  };
   let fartAudio = loadAudio(ASSETS.sfx);
 
   (async function preload(){
     Images.bg = await loadImage(ASSETS.bg);
     if (Images.bg){
-      // Resize canvas to background’s native resolution
       canvas.width  = Images.bg.naturalWidth  || Images.bg.width;
       canvas.height = Images.bg.naturalHeight || Images.bg.height;
-      GROUND_Y = canvas.height - 1; // bottom scanline as ground
+      GROUND_Y = canvas.height - 1;
     }
-    Images.judge.idle = await loadImage(ASSETS.sprites.judge.idle);
-    Images.judge.walk = await loadImage(ASSETS.sprites.judge.walk);
-    Images.judge.fart = await loadImage(ASSETS.sprites.judge.crouch_fart_left);
-    Images.chimp      = await loadImage(ASSETS.sprites.chimpNpcIdle);
-    Images.mole       = await loadImage(ASSETS.sprites.moleNpcIdle);
+    Images.chimpIdle = await loadSeq(ASSETS.chimpIdle, COUNTS.chimpIdle);
+    Images.moleIdle  = await loadSeq(ASSETS.moleIdle,  COUNTS.moleIdle);
+    Images.judgeIdle = await loadSeq(ASSETS.judgeIdle, COUNTS.judgeIdle);
+    Images.judgeWalk = await loadSeq(ASSETS.judgeWalk, COUNTS.judgeWalk);
+    Images.judgeFart = await loadSeq(ASSETS.judgeFart, COUNTS.judgeFart);
     requestAnimationFrame(loop);
   })();
 
-  // ====== ENTITIES ===========================================================
-  const player = { x: canvas.width/2, y: GROUND_Y, facing: 1, state:'idle', until:0, anim:0, w:FRAME_W, h:FRAME_H };
-  const chimp  = { name:'chimp', x: Math.max(24, canvas.width*0.25), y:GROUND_Y, anim:0, w:FRAME_W, h:FRAME_H };
-  const mole   = { name:'mole',  x: Math.min(canvas.width-24, canvas.width*0.75), y:GROUND_Y, anim:0, w:FRAME_W, h:FRAME_H };
+  // -------------------- Entities --------------------------------------------
+  const player = { x: 0, y: 0, facing: 1, state:'idle', until:0, anim:0, w:FRAME_W, h:FRAME_H };
+  const chimp  = { x: 0, y: 0, anim:0, w:FRAME_W, h:FRAME_H };
+  const mole   = { x: 0, y: 0, anim:0, w:FRAME_W, h:FRAME_H };
+
+  // place them after bg sizing
+  function placeEntities(){
+    player.x = canvas.width/2; player.y = GROUND_Y;
+    chimp.x  = Math.max(20, canvas.width*0.25);  chimp.y = GROUND_Y;
+    mole.x   = Math.min(canvas.width-20, canvas.width*0.75);  mole.y = GROUND_Y;
+  }
+  placeEntities();
 
   function distX(a,b){ return Math.abs(a.x - b.x); }
   function facingToward(from, to){ return (to.x < from.x) ? -1 : 1; }
 
-  // ====== ANIMATION HELPERS ==================================================
-  const FR = { judge:{ idle:4, walk:6, fart:3 }, npc:{ idle:4 } };
-  function drawFrame(img, frames, tms, x, y, facing=1){
-    if (!img) return false;
-    const idx = Math.floor((tms/120) % frames);
-    const sx = idx * FRAME_W;
+  // -------------------- Animation helpers -----------------------------------
+  function drawFrame(img, x, y, facing){
+    if (!img) return;
     ctx.save();
     if (facing === -1){
-      ctx.translate(x,0);
-      ctx.scale(-1,1);
-      x = 0;
+      ctx.translate(x,0); ctx.scale(-1,1); x = 0;
     }
-    ctx.drawImage(img, sx, 0, FRAME_W, FRAME_H, x - FRAME_W/2, y - FRAME_H, FRAME_W, FRAME_H);
+    ctx.drawImage(img, x - FRAME_W/2, y - FRAME_H, FRAME_W, FRAME_H);
     ctx.restore();
-    return true;
+  }
+  function drawSeq(seq, tms, x, y, facing, msPerFrame){
+    if (!seq) return;
+    const idx = Math.floor((tms / msPerFrame) % seq.length);
+    drawFrame(seq[idx], x, y, facing);
   }
 
-  // ====== GAME LOOP ==========================================================
+  // -------------------- Game loop -------------------------------------------
   let last = 0;
   function loop(ts){
     const dt = (ts - last) || 16.67; last = ts;
 
-    // Movement (hold to walk)
+    // Movement (hold ◀▶ to walk), unless farting
     if (player.state !== 'fart'){
-      if (Hold.left && !Hold.right){ player.x -= SPEED*dt; player.facing = -1; player.state = 'walk'; }
-      else if (Hold.right && !Hold.left){ player.x += SPEED*dt; player.facing = 1; player.state = 'walk'; }
+      if (hold.left && !hold.right){ player.x -= SPEED*dt; player.facing = -1; player.state = 'walk'; }
+      else if (hold.right && !hold.left){ player.x += SPEED*dt; player.facing = 1; player.state = 'walk'; }
       else { player.state = 'idle'; }
     }
 
-    // Bounds (keep inside background)
+    // Bounds
     const margin = FRAME_W*0.4;
     player.x = Math.max(margin, Math.min(canvas.width - margin, player.x));
 
     // End fart
     if (player.state === 'fart' && performance.now() > player.until){ player.state = 'idle'; }
 
-    // Advance anim clocks
+    // Anim clocks
     player.anim += dt; chimp.anim += dt; mole.anim += dt;
 
-    // Render
     render();
-
     requestAnimationFrame(loop);
   }
 
   function render(){
-    // Background (or placeholder)
+    // Background
     if (Images.bg) ctx.drawImage(Images.bg, 0, 0, canvas.width, canvas.height);
     else { ctx.fillStyle = '#1d1f29'; ctx.fillRect(0,0,canvas.width,canvas.height); }
 
-    // Ground guideline (optional)
-    // ctx.fillStyle = 'rgba(255,255,255,0.05)';
-    // ctx.fillRect(0, GROUND_Y, canvas.width, 1);
+    // NPCs (idle)
+    if (Images.chimpIdle) drawSeq(Images.chimpIdle, chimp.anim, chimp.x, chimp.y, 1, 140);
+    else { ctx.fillStyle = '#5ab'; ctx.fillRect(chimp.x-22, chimp.y-48, 44, 48); }
 
-    // NPCs
-    drawNPC(chimp, Images.chimp, 'Chimp');
-    drawNPC(mole,  Images.mole,  'Mole');
+    if (Images.moleIdle) drawSeq(Images.moleIdle, mole.anim, mole.x, mole.y, 1, 140);
+    else { ctx.fillStyle = '#b85'; ctx.fillRect(mole.x-22, mole.y-48, 44, 48); }
 
-    // Player (sprites if present; else placeholder purple block + wig strip)
-    if (Images.judge.walk || Images.judge.idle){
-      if (player.state === 'walk') {
-        drawFrame(Images.judge.walk || Images.judge.idle, Images.judge.walk ? FR.judge.walk : FR.judge.idle, player.anim, player.x, player.y, player.facing);
-      } else if (player.state === 'fart' && Images.judge.fart){
-        drawFrame(Images.judge.fart, FR.judge.fart, player.anim, player.x, player.y, player.facing);
-      } else {
-        drawFrame(Images.judge.idle || Images.judge.walk, Images.judge.idle ? FR.judge.idle : FR.judge.walk, player.anim, player.x, player.y, player.facing);
-      }
+    // Player (idle/walk/fart). Fart animation is LEFT set; RIGHT is mirrored via facing.
+    if (player.state === 'walk' && Images.judgeWalk){
+      drawSeq(Images.judgeWalk, player.anim, player.x, player.y, player.facing, 110);
+    } else if (player.state === 'fart' && Images.judgeFart){
+      drawSeq(Images.judgeFart, player.anim, player.x, player.y, player.facing, 90);
+    } else if (Images.judgeIdle){
+      drawSeq(Images.judgeIdle, player.anim, player.x, player.y, player.facing, 140);
     } else {
       // Placeholder
-      ctx.fillStyle = '#8338EC'; // Social Burst purple
-      ctx.fillRect(player.x - 22, player.y - 60, 44, 60);
-      ctx.fillStyle = '#e7e7e7'; ctx.fillRect(player.x - 22, player.y - 66, 44, 6);
+      ctx.fillStyle = '#8338EC'; ctx.fillRect(player.x-22, player.y-60, 44, 60);
+      ctx.fillStyle = '#e7e7e7'; ctx.fillRect(player.x-22, player.y-66, 44, 6);
     }
 
-    // Fart puff if farting (works even without fart sprite)
-    if (player.state === 'fart'){
-      const dir = player.facing;
-      const cx = player.x + dir * 24;
-      const cy = player.y - 16;
-      ctx.beginPath();
-      ctx.arc(cx, cy, 6 + Math.random()*4, 0, Math.PI*2);
-      ctx.fillStyle = 'rgba(173,255,47,0.9)';
-      ctx.fill();
-    }
-
-    // Prompt if close to an NPC
+    // Prompt if close
     const target = closestInRange();
-    if (target){
-      drawPrompt(target.x, target.y - FRAME_H - 6, 'Tap character');
-    }
-  }
-
-  function drawNPC(npc, img, label){
-    if (img){
-      drawFrame(img, FR.npc.idle, npc.anim, npc.x, npc.y, 1);
-    } else {
-      ctx.fillStyle = '#5ab'; // placeholder
-      ctx.fillRect(npc.x - 22, npc.y - 48, 44, 48);
-    }
-    // name
-    ctx.fillStyle = '#ddd'; ctx.font = '10px monospace'; ctx.textAlign = 'center';
-    ctx.fillText(label, npc.x, npc.y - FRAME_H - 10);
+    if (target) drawPrompt(target.x, target.y - FRAME_H - 6, 'Tap');
   }
 
   function drawPrompt(x, y, text){
-    const w = 86, h = 16;
+    const w = 40, h = 16;
     ctx.fillStyle = 'rgba(255,255,255,0.95)';
     ctx.fillRect(x - w/2, y - h, w, h);
     ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.strokeRect(x - w/2, y - h, w, h);
@@ -265,12 +269,12 @@
     return near.reduce((a,b)=> Math.abs(player.x-a.x) < Math.abs(player.x-b.x) ? a : b);
   }
 
-  // ====== INTERACTION (tap to fart when close & tap hits NPC bounds) =========
+  // -------------------- Interaction -----------------------------------------
   function tryInteract(cx, cy){
     const target = closestInRange();
     if (!target) return;
 
-    // Hit test on NPC sprite bounds
+    // Hit test (frame bounds)
     const halfW = FRAME_W/2, topY = target.y - FRAME_H, bottomY = target.y;
     const within =
       (cx >= target.x - halfW) && (cx <= target.x + halfW) &&
@@ -278,13 +282,12 @@
 
     if (!within) return;
 
-    // Trigger fart
+    // Trigger fart (mirror by facing toward target)
     player.facing = facingToward(player, target);
     player.state = 'fart';
     player.until = performance.now() + FART_MS;
-    player.anim = 0; // restart anim for the 3-frame fart sheet
+    player.anim = 0;
     if (fartAudio){ try { fartAudio.currentTime = 0; fartAudio.play(); } catch(_){} }
-    // (Optional future) make target flinch here
   }
   </script>
 </body>

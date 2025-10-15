@@ -38,11 +38,18 @@
       color: #eaeaf6; font: 18px/1 monospace;
     }
     .btn:active { background: rgba(0,0,0,0.75); }
-    .hint {
-      position: fixed; left: 50%; transform: translateX(-50%);
-      bottom: calc(70px + var(--safe-bot));
-      background: rgba(0,0,0,0.6);
-      color: #cfcfe7; font: 12px monospace; padding: 6px 8px; border-radius: 6px;
+
+    /* “Tap the mandem” message */
+    .header-message {
+      position: fixed;
+      top: 10px; left: 50%;
+      transform: translateX(-50%);
+      background: rgba(255,255,255,0.95);
+      color: #111;
+      font: 14px monospace;
+      padding: 4px 10px;
+      border-radius: 6px;
+      border: 2px solid rgba(0,0,0,0.2);
       user-select: none;
     }
   </style>
@@ -51,7 +58,7 @@
   <div class="wrap">
     <canvas id="game" width="136" height="88" aria-label="Chimp Judge"></canvas>
 
-    <div class="hint">Hold ◀ ▶ to walk • Tap an NPC when you’re close.</div>
+    <div class="header-message">Tap the mandem</div>
 
     <div class="controls" aria-hidden="false">
       <div class="btn" id="btn-left">◀</div>
@@ -72,21 +79,17 @@
   };
   const COUNTS = { chimpIdle:4, moleIdle:4, judgeIdle:4, judgeWalk:6, judgeFart:5 };
 
-  // Recommended sprite frame size
   const FRAME_W = 64, FRAME_H = 64;
-  // Scale all sprites a bit smaller (tweak 0.65–0.85 to taste)
-  const SPRITE_SCALE = 0.75;
+  const SPRITE_SCALE = 0.75; // smaller characters
 
   // -------------------- Canvas / sizing -------------------------------------
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
-
-  // Ground = bottom of the background image; set after bg loads.
   let GROUND_Y = canvas.height - 1;
 
-  // Movement / gameplay tuning (values are in bg pixels/ms)
-  const SPEED = 0.5;              // walk speed
-  const PROMPT_RADIUS = 14;       // distance to allow interaction
+  // Gameplay tuning
+  const SPEED = 0.25;              // slower walk speed
+  const PROMPT_RADIUS = 14;        // distance to interact
   const FART_MS = 350;
 
   // -------------------- Input (touch + mouse) -------------------------------
@@ -143,7 +146,7 @@
 
   const Images = {
     bg:null,
-    chimpIdle:null,   // frame arrays
+    chimpIdle:null,
     moleIdle:null,
     judgeIdle:null,
     judgeWalk:null,
@@ -157,7 +160,7 @@
       canvas.width  = Images.bg.naturalWidth  || Images.bg.width;
       canvas.height = Images.bg.naturalHeight || Images.bg.height;
       GROUND_Y = canvas.height - 1;
-      placeEntities(); // after we know width/height
+      placeEntities();
     }
     Images.chimpIdle = await loadSeq(ASSETS.chimpIdle, COUNTS.chimpIdle);
     Images.moleIdle  = await loadSeq(ASSETS.moleIdle,  COUNTS.moleIdle);
@@ -168,9 +171,9 @@
   })();
 
   // -------------------- Entities --------------------------------------------
-  const player = { x: 0, y: 0, facing: 1, state:'idle', until:0, anim:0, w:FRAME_W, h:FRAME_H };
-  const chimp  = { x: 0, y: 0, anim:0, w:FRAME_W, h:FRAME_H };
-  const mole   = { x: 0, y: 0, anim:0, w:FRAME_W, h:FRAME_H };
+  const player = { x: 0, y: 0, facing: 1, state:'idle', until:0, anim:0 };
+  const chimp  = { x: 0, y: 0, anim:0 };
+  const mole   = { x: 0, y: 0, anim:0 };
 
   function placeEntities(){
     player.x = canvas.width/2; player.y = GROUND_Y;
@@ -204,21 +207,17 @@
   function loop(ts){
     const dt = (ts - last) || 16.67; last = ts;
 
-    // Movement (hold ◀▶ to walk), unless farting
     if (player.state !== 'fart'){
       if (hold.left && !hold.right){ player.x -= SPEED*dt; player.facing = -1; player.state = 'walk'; }
       else if (hold.right && !hold.left){ player.x += SPEED*dt; player.facing = 1; player.state = 'walk'; }
       else { player.state = 'idle'; }
     }
 
-    // Bounds
     const margin = (FRAME_W * SPRITE_SCALE) * 0.4;
     player.x = Math.max(margin, Math.min(canvas.width - margin, player.x));
 
-    // End fart
     if (player.state === 'fart' && performance.now() > player.until){ player.state = 'idle'; }
 
-    // Anim clocks
     player.anim += dt; chimp.anim += dt; mole.anim += dt;
 
     render();
@@ -226,18 +225,12 @@
   }
 
   function render(){
-    // Background
     if (Images.bg) ctx.drawImage(Images.bg, 0, 0, canvas.width, canvas.height);
     else { ctx.fillStyle = '#1d1f29'; ctx.fillRect(0,0,canvas.width,canvas.height); }
 
-    // NPCs (idle)
     if (Images.chimpIdle) drawSeq(Images.chimpIdle, chimp.anim, chimp.x, chimp.y, 1, 140);
-    else { ctx.fillStyle = '#5ab'; ctx.fillRect(chimp.x-22, chimp.y-48, 44, 48); }
-
     if (Images.moleIdle) drawSeq(Images.moleIdle, mole.anim, mole.x, mole.y, 1, 140);
-    else { ctx.fillStyle = '#b85'; ctx.fillRect(mole.x-22, mole.y-48, 44, 48); }
 
-    // Player (idle/walk/fart). Fart animation is LEFT set; RIGHT is mirrored via facing.
     if (player.state === 'walk' && Images.judgeWalk){
       drawSeq(Images.judgeWalk, player.anim, player.x, player.y, player.facing, 110);
     } else if (player.state === 'fart' && Images.judgeFart){
@@ -245,12 +238,11 @@
     } else if (Images.judgeIdle){
       drawSeq(Images.judgeIdle, player.anim, player.x, player.y, player.facing, 140);
     } else {
-      // Placeholder
       ctx.fillStyle = '#8338EC'; ctx.fillRect(player.x-22, player.y-60, 44, 60);
       ctx.fillStyle = '#e7e7e7'; ctx.fillRect(player.x-22, player.y-66, 44, 6);
     }
 
-    // Fixed white labels over each NPC (replace old "Tap" prompt)
+    // White name labels
     drawNamePlate(chimp.x, chimp.y, "James Coyne");
     drawNamePlate(mole.x,  mole.y,  "James Holland");
   }
@@ -260,12 +252,10 @@
     const w = Math.max(80, text.length * 7.2);
     const h = 18;
     const top = y - dh - 8;
-
     ctx.fillStyle = 'rgba(255,255,255,0.98)';
     ctx.fillRect(x - w/2, top - h, w, h);
     ctx.strokeStyle = 'rgba(0,0,0,0.35)';
     ctx.strokeRect(x - w/2, top - h, w, h);
-
     ctx.fillStyle = '#111';
     ctx.font = '12px monospace';
     ctx.textAlign = 'center';
@@ -285,7 +275,6 @@
     const target = closestInRange();
     if (!target) return;
 
-    // Hit test (scaled sprite bounds)
     const halfW = Math.round((FRAME_W * SPRITE_SCALE) / 2);
     const topY  = target.y - Math.round(FRAME_H * SPRITE_SCALE);
     const bottomY = target.y;
@@ -296,7 +285,6 @@
 
     if (!within) return;
 
-    // Trigger fart (mirror by facing toward target)
     player.facing = facingToward(player, target);
     player.state = 'fart';
     player.until = performance.now() + FART_MS;

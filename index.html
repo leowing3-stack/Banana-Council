@@ -51,7 +51,7 @@
   <div class="wrap">
     <canvas id="game" width="136" height="88" aria-label="Chimp Judge"></canvas>
 
-    <div class="hint">Hold ◀ ▶ to walk • When close, <b>tap the NPC</b> to fart.</div>
+    <div class="hint">Hold ◀ ▶ to walk • Tap an NPC when you’re close.</div>
 
     <div class="controls" aria-hidden="false">
       <div class="btn" id="btn-left">◀</div>
@@ -74,6 +74,8 @@
 
   // Recommended sprite frame size
   const FRAME_W = 64, FRAME_H = 64;
+  // Scale all sprites a bit smaller (tweak 0.65–0.85 to taste)
+  const SPRITE_SCALE = 0.75;
 
   // -------------------- Canvas / sizing -------------------------------------
   const canvas = document.getElementById('game');
@@ -82,9 +84,9 @@
   // Ground = bottom of the background image; set after bg loads.
   let GROUND_Y = canvas.height - 1;
 
-  // Movement / gameplay tuning (background is small; values are in bg pixels/ms)
+  // Movement / gameplay tuning (values are in bg pixels/ms)
   const SPEED = 0.5;              // walk speed
-  const PROMPT_RADIUS = 14;       // distance to show "tap" prompt
+  const PROMPT_RADIUS = 14;       // distance to allow interaction
   const FART_MS = 350;
 
   // -------------------- Input (touch + mouse) -------------------------------
@@ -96,7 +98,7 @@
     el.addEventListener('touchcancel',(e)=>{off(); e.preventDefault();}, {passive:false});
     el.addEventListener('mousedown',  (e)=>{on(); e.preventDefault();});
     el.addEventListener('mouseup',    (e)=>{off(); e.preventDefault();});
-    el.addEventListener('mouseleave', (e)=>{off();});
+    el.addEventListener('mouseleave', ()=>{off();});
   }
   bindHold(document.getElementById('btn-left'), 'left');
   bindHold(document.getElementById('btn-right'),'right');
@@ -155,6 +157,7 @@
       canvas.width  = Images.bg.naturalWidth  || Images.bg.width;
       canvas.height = Images.bg.naturalHeight || Images.bg.height;
       GROUND_Y = canvas.height - 1;
+      placeEntities(); // after we know width/height
     }
     Images.chimpIdle = await loadSeq(ASSETS.chimpIdle, COUNTS.chimpIdle);
     Images.moleIdle  = await loadSeq(ASSETS.moleIdle,  COUNTS.moleIdle);
@@ -169,25 +172,25 @@
   const chimp  = { x: 0, y: 0, anim:0, w:FRAME_W, h:FRAME_H };
   const mole   = { x: 0, y: 0, anim:0, w:FRAME_W, h:FRAME_H };
 
-  // place them after bg sizing
   function placeEntities(){
     player.x = canvas.width/2; player.y = GROUND_Y;
     chimp.x  = Math.max(20, canvas.width*0.25);  chimp.y = GROUND_Y;
     mole.x   = Math.min(canvas.width-20, canvas.width*0.75);  mole.y = GROUND_Y;
   }
-  placeEntities();
 
   function distX(a,b){ return Math.abs(a.x - b.x); }
   function facingToward(from, to){ return (to.x < from.x) ? -1 : 1; }
 
-  // -------------------- Animation helpers -----------------------------------
+  // -------------------- Animation helpers (scaled) ---------------------------
   function drawFrame(img, x, y, facing){
     if (!img) return;
+    const dw = Math.round(FRAME_W * SPRITE_SCALE);
+    const dh = Math.round(FRAME_H * SPRITE_SCALE);
     ctx.save();
     if (facing === -1){
       ctx.translate(x,0); ctx.scale(-1,1); x = 0;
     }
-    ctx.drawImage(img, x - FRAME_W/2, y - FRAME_H, FRAME_W, FRAME_H);
+    ctx.drawImage(img, x - dw/2, y - dh, dw, dh);
     ctx.restore();
   }
   function drawSeq(seq, tms, x, y, facing, msPerFrame){
@@ -209,7 +212,7 @@
     }
 
     // Bounds
-    const margin = FRAME_W*0.4;
+    const margin = (FRAME_W * SPRITE_SCALE) * 0.4;
     player.x = Math.max(margin, Math.min(canvas.width - margin, player.x));
 
     // End fart
@@ -247,18 +250,26 @@
       ctx.fillStyle = '#e7e7e7'; ctx.fillRect(player.x-22, player.y-66, 44, 6);
     }
 
-    // Prompt if close
-    const target = closestInRange();
-    if (target) drawPrompt(target.x, target.y - FRAME_H - 6, 'Tap');
+    // Fixed white labels over each NPC (replace old "Tap" prompt)
+    drawNamePlate(chimp.x, chimp.y, "James Coyne");
+    drawNamePlate(mole.x,  mole.y,  "James Holland");
   }
 
-  function drawPrompt(x, y, text){
-    const w = 40, h = 16;
-    ctx.fillStyle = 'rgba(255,255,255,0.95)';
-    ctx.fillRect(x - w/2, y - h, w, h);
-    ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.strokeRect(x - w/2, y - h, w, h);
-    ctx.fillStyle = '#111'; ctx.font = '10px monospace'; ctx.textAlign = 'center';
-    ctx.fillText(text, x, y - 4);
+  function drawNamePlate(x, y, text){
+    const dh = Math.round(FRAME_H * SPRITE_SCALE);
+    const w = Math.max(80, text.length * 7.2);
+    const h = 18;
+    const top = y - dh - 8;
+
+    ctx.fillStyle = 'rgba(255,255,255,0.98)';
+    ctx.fillRect(x - w/2, top - h, w, h);
+    ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+    ctx.strokeRect(x - w/2, top - h, w, h);
+
+    ctx.fillStyle = '#111';
+    ctx.font = '12px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(text, x, top - 4);
   }
 
   function closestInRange(){
@@ -274,8 +285,11 @@
     const target = closestInRange();
     if (!target) return;
 
-    // Hit test (frame bounds)
-    const halfW = FRAME_W/2, topY = target.y - FRAME_H, bottomY = target.y;
+    // Hit test (scaled sprite bounds)
+    const halfW = Math.round((FRAME_W * SPRITE_SCALE) / 2);
+    const topY  = target.y - Math.round(FRAME_H * SPRITE_SCALE);
+    const bottomY = target.y;
+
     const within =
       (cx >= target.x - halfW) && (cx <= target.x + halfW) &&
       (cy >= topY) && (cy <= bottomY);

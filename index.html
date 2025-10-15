@@ -185,19 +185,22 @@
     ctx.fillText(text, x, top - 3);
   }
  /* PATCH START: fix Leo placement so it’s visible (just above the feet) */
+/* PATCH START: tiny "Leo" banner directly BELOW the feet */
 function drawTinyTagBelow(x, y, text){
   const w = Math.max(30, Math.ceil(text.length * 5.5));
   const h = 10;
-  const top = Math.max(2, y - 12); // a few pixels ABOVE the baseline so it stays on-canvas
+  const offset = 6; // how far below the feet it sits
+  const base = y + offset;
   ctx.fillStyle = 'rgba(255,255,255,0.98)';
-  ctx.fillRect(x - w/2, top - h, w, h);
+  ctx.fillRect(x - w/2, base, w, h);
   ctx.strokeStyle = 'rgba(0,0,0,0.35)';
-  ctx.strokeRect(x - w/2, top - h, w, h);
+  ctx.strokeRect(x - w/2, base, w, h);
   ctx.fillStyle = '#111';
   ctx.font = '8px monospace';
   ctx.textAlign = 'center';
-  ctx.fillText(text, x, top - 3);
+  ctx.fillText(text, x, base + h - 3);
 }
+/* PATCH END */
 /* PATCH END */
 
   (async function preloadImmediate(){

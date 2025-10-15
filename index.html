@@ -180,4 +180,183 @@
   function facingToward(from, to){ return (to.x < from.x) ? -1 : 1; }
 
   // ---------- Draw helpers (native size) ----------
-  function drawFrame(img, x,
+  function drawFrame(img, x, y, facing){
+    if (!img) return;
+    ctx.save();
+    if (facing === -1){ ctx.translate(x,0); ctx.scale(-1,1); x = 0; }
+    ctx.drawImage(img, x - FRAME_W/2, y - FRAME_H, FRAME_W, FRAME_H);
+    ctx.restore();
+  }
+  function drawSeq(seq, tms, x, y, facing, msPerFrame){
+    if (!seq) return;
+    const idx = Math.floor((tms / msPerFrame) % seq.length);
+    drawFrame(seq[idx], x, y, facing);
+  }
+
+  // ---------- Nameplates ----------
+  function drawNamePlate(x, y, text){
+    const w = Math.max(44, Math.ceil(text.length * 6));
+    const h = 12;
+    const top = y - FRAME_H - 5;
+    ctx.fillStyle = 'rgba(255,255,255,0.98)';
+    ctx.fillRect(x - w/2, top - h, w, h);
+    ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+    ctx.strokeRect(x - w/2, top - h, w, h);
+    ctx.fillStyle = '#111';
+    ctx.font = '9px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(text, x, top - 3);
+  }
+  function drawTinyTag(x, y, text){ // tiny “Leo” over the judge
+    const w = Math.max(30, Math.ceil(text.length * 5.5));
+    const h = 10;
+    const top = y - FRAME_H - 3;
+    ctx.fillStyle = 'rgba(255,255,255,0.98)';
+    ctx.fillRect(x - w/2, top - h, w, h);
+    ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+    ctx.strokeRect(x - w/2, top - h, w, h);
+    ctx.fillStyle = '#111';
+    ctx.font = '8px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(text, x, top - 3);
+  }
+
+  // ---------- Start / lazy-load ----------
+  let started = false;
+  const overlay = document.getElementById('overlay');
+  const startBtn = document.getElementById('startBtn');
+  const loadMsg = document.getElementById('loadMsg');
+  startBtn.addEventListener('click', async () => {
+    started = true;
+    startBtn.style.display = 'none';
+    loadMsg.style.display = 'block';
+
+    // Begin loading AFTER user starts
+    fartAudio = makeAudio(ASSETS.sfx);
+
+    Images.bg = await loadImage(ASSETS.bg);
+    if (Images.bg){
+      canvas.width  = Images.bg.naturalWidth  || Images.bg.width;
+      canvas.height = Images.bg.naturalHeight || Images.bg.height;
+      GROUND_Y = canvas.height - 1;
+      placeEntities();
+    }
+
+    // Load sprites
+    [Images.chimpIdle, Images.moleIdle, Images.judgeIdle, Images.judgeWalk, Images.judgeFart] =
+      await Promise.all([
+        loadSeq(ASSETS.chimpIdle, COUNTS.chimpIdle),
+        loadSeq(ASSETS.moleIdle,  COUNTS.moleIdle),
+        loadSeq(ASSETS.judgeIdle, COUNTS.judgeIdle),
+        loadSeq(ASSETS.judgeWalk, COUNTS.judgeWalk),
+        loadSeq(ASSETS.judgeFart, COUNTS.judgeFart)
+      ]);
+
+    overlay.style.display = 'none';
+    requestAnimationFrame(loop);
+  });
+
+  // ---------- Loop ----------
+  let last = 0;
+  function loop(ts){
+    const dt = (ts - last) || 16.67; last = ts;
+
+    if (player.state !== 'fart'){
+      if (hold.left && !hold.right){ player.x -= SPEED*dt; player.facing = -1; player.state = 'walk'; }
+      else if (hold.right && !hold.left){ player.x += SPEED*dt; player.facing = 1; player.state = 'walk'; }
+      else { player.state = 'idle'; }
+    }
+
+    // keep inside scene
+    const half = Math.floor(FRAME_W/2);
+    player.x = Math.max(half, Math.min(canvas.width - half, player.x));
+
+    // advance anim clocks
+    player.anim += dt; chimp.anim += dt; mole.anim += dt;
+
+    render();
+    requestAnimationFrame(loop);
+  }
+
+  function render(){
+    // background
+    if (Images.bg) ctx.drawImage(Images.bg, 0, 0, canvas.width, canvas.height);
+    else { ctx.fillStyle = '#1d1f29'; ctx.fillRect(0,0,canvas.width,canvas.height); }
+
+    // NPCs
+    if (Images.chimpIdle) drawSeq(Images.chimpIdle, chimp.anim, chimp.x, chimp.y, 1, 140);
+    if (Images.moleIdle)  drawSeq(Images.moleIdle,  mole.anim,  mole.x,  mole.y, 1, 140);
+
+    // Player
+    if (player.state === 'walk' && Images.judgeWalk){
+      drawSeq(Images.judgeWalk, player.anim, player.x, player.y, player.facing, 120);
+    } else if (player.state === 'fart' && Images.judgeFart){
+      drawSeq(Images.judgeFart, player.anim, player.x, player.y, player.facing, 90);
+    } else if (Images.judgeIdle){
+      drawSeq(Images.judgeIdle, player.anim, player.x, player.y, player.facing, 140);
+    } else {
+      // fallback placeholder
+      ctx.fillStyle = '#8338EC'; ctx.fillRect(player.x-22, player.y-60, 44, 60);
+      ctx.fillStyle = '#e7e7e7'; ctx.fillRect(player.x-22, player.y-66, 44, 6);
+    }
+
+    // Nameplates:
+    const active = closestInRange();
+    if (active === chimp)  drawNamePlate(chimp.x, chimp.y, chimp.label);
+    if (active === mole)   drawNamePlate(mole.x,  mole.y,  mole.label);
+
+    // Tiny "Leo" always over the judge
+    drawTinyTag(player.x, player.y, 'Leo');
+  }
+
+  function closestInRange(){
+    const near = [];
+    if (Math.abs(player.x - chimp.x) <= PROMPT_RADIUS) near.push(chimp);
+    if (Math.abs(player.x - mole.x)  <= PROMPT_RADIUS) near.push(mole);
+    if (!near.length) return null;
+    return near.reduce((a,b)=> Math.abs(player.x-a.x) < Math.abs(player.x-b.x) ? a : b);
+  }
+
+  // ---------- Interaction ----------
+  function tryInteract(cx, cy){
+    const target = closestInRange();
+    if (!target) return;
+
+    // Hit test (native sprite bounds)
+    const halfW = Math.floor(FRAME_W/2);
+    const topY  = GROUND_Y - FRAME_H;
+    const within =
+      (cx >= target.x - halfW) && (cx <= target.x + halfW) &&
+      (cy >= topY) && (cy <= GROUND_Y);
+
+    if (!within) return;
+
+    // Trigger fart — stay crouched until audio ends
+    player.facing = facingToward(player, target);
+    player.state = 'fart';
+    player.anim = 0;
+
+    let ended = false;
+    const endFart = ()=>{
+      if (ended) return;
+      ended = true;
+      player.state = 'idle';
+      if (player.fartTimer){ clearTimeout(player.fartTimer); player.fartTimer = null; }
+      if (fartAudio){ fartAudio.onended = null; }
+    };
+
+    if (fartAudio){
+      try {
+        fartAudio.currentTime = 0;
+        fartAudio.onended = endFart;
+        // play must be triggered from user gesture; we’re inside a tap, so OK
+        const p = fartAudio.play();
+        if (p && p.catch) p.catch(()=>{}); // ignore autoplay block
+      } catch(_) {}
+    }
+    // Fallback timeout in case onended doesn't fire
+    player.fartTimer = setTimeout(endFart, FART_FALLBACK_MS);
+  }
+  </script>
+</body>
+</html>

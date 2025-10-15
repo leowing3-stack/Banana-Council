@@ -38,11 +38,27 @@
       color: #eaeaf6; font: 18px/1 monospace;
     }
     .btn:active { background: rgba(0,0,0,0.75); }
+
+    /* top header text */
+    .header-message {
+      position: fixed;
+      top: 8px; left: 50%;
+      transform: translateX(-50%);
+      background: rgba(255,255,255,0.95);
+      color: #111;
+      font: 14px monospace;
+      padding: 4px 10px;
+      border-radius: 6px;
+      border: 2px solid rgba(0,0,0,0.2);
+      user-select: none;
+      z-index: 5;
+    }
   </style>
 </head>
 <body>
   <div class="wrap">
     <canvas id="game" width="136" height="88" aria-label="Chimp Judge"></canvas>
+    <div class="header-message">Tap the mandem</div>
 
     <div class="controls" aria-hidden="false">
       <div class="btn" id="btn-left">◀</div>
@@ -51,30 +67,27 @@
   </div>
 
   <script>
-  // ---- ASSETS (per-frame images) ----
   const ASSETS = {
     bg: 'assets/backgrounds/courtroom.png',
     sfx: 'assets/sfx/fart.wav',
-    chimpIdle: (i)=>`assets/characters/chimp/chimp_npc_idle/${i}.png`,  // 0..3
-    moleIdle:  (i)=>`assets/characters/mole/mole_npc_idle/${i}.png`,    // 0..3
-    judgeIdle: (i)=>`assets/characters/judge/judge_idle/${i}.png`,      // 0..3
-    judgeWalk: (i)=>`assets/characters/judge/judge_walk/${i}.png`,      // 0..5
-    judgeFart: (i)=>`assets/characters/judge/judge_fart/${i}.png`       // 0..4
+    chimpIdle: (i)=>`assets/characters/chimp/chimp_npc_idle/${i}.png`,
+    moleIdle:  (i)=>`assets/characters/mole/mole_npc_idle/${i}.png`,
+    judgeIdle: (i)=>`assets/characters/judge/judge_idle/${i}.png`,
+    judgeWalk: (i)=>`assets/characters/judge/judge_walk/${i}.png`,
+    judgeFart: (i)=>`assets/characters/judge/judge_fart/${i}.png`
   };
   const COUNTS = { chimpIdle:4, moleIdle:4, judgeIdle:4, judgeWalk:6, judgeFart:5 };
 
-  // ---- World / sizing ----
   const FRAME_W = 64, FRAME_H = 64;
-  const SPRITE_SCALE = 0.70;         // smaller characters
-  const SPEED = 0.09;                // slow walk (px/ms)
-  const PROMPT_RADIUS = 18;          // when close enough to show name
-  const FART_FALLBACK_MS = 1200;     // backup if audio end event fails
+  const SPRITE_SCALE = 0.70;
+  const SPEED = 0.09;
+  const PROMPT_RADIUS = 18;
+  const FART_FALLBACK_MS = 1200;
 
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d', { alpha:false });
   let GROUND_Y = canvas.height - 1;
 
-  // ---- Input ----
   const hold = { left:false, right:false };
   function bindHold(el, key){
     const on = ()=>hold[key]=true, off=()=>hold[key]=false;
@@ -106,7 +119,6 @@
     if (e.preventDefault) e.preventDefault();
   }
 
-  // ---- Loaders ----
   function loadImage(src){
     return new Promise(res=>{
       const img=new Image();
@@ -131,7 +143,6 @@
   };
   let fartAudio = null;
 
-  // ---- Entities ----
   const player = { x: 0, y: 0, facing: 1, state:'idle', anim:0, fartTimer:null };
   const chimp  = { x: 0, y: 0, anim:0, label:'Coyne'   };
   const mole   = { x: 0, y: 0, anim:0, label:'Holland' };
@@ -144,9 +155,6 @@
     player.x = Math.floor(canvas.width / 2); player.y = GROUND_Y;
   }
 
-  function facingToward(from, to){ return (to.x < from.x) ? -1 : 1; }
-
-  // ---- Draw helpers (scaled) ----
   function drawFrame(img, x, y, facing){
     if (!img) return;
     const dw = Math.round(FRAME_W * SPRITE_SCALE);
@@ -162,7 +170,6 @@
     drawFrame(seq[idx], x, y, facing);
   }
 
-  // ---- Labels ----
   function drawNamePlate(x, y, text){
     const dh = Math.round(FRAME_H * SPRITE_SCALE);
     const w = Math.max(44, Math.ceil(text.length * 6));
@@ -191,10 +198,8 @@
     ctx.fillText(text, x, base + h - 3);
   }
 
-  // ---- Preload immediately (no start screen) ----
   (async function preloadImmediate(){
     fartAudio = makeAudio(ASSETS.sfx);
-
     Images.bg = await loadImage(ASSETS.bg);
     if (Images.bg){
       canvas.width  = Images.bg.naturalWidth  || Images.bg.width;
@@ -202,7 +207,6 @@
       GROUND_Y = canvas.height - 1;
       placeEntities();
     }
-
     [Images.chimpIdle, Images.moleIdle, Images.judgeIdle, Images.judgeWalk, Images.judgeFart] =
       await Promise.all([
         loadSeq(ASSETS.chimpIdle, COUNTS.chimpIdle),
@@ -211,26 +215,20 @@
         loadSeq(ASSETS.judgeWalk, COUNTS.judgeWalk),
         loadSeq(ASSETS.judgeFart, COUNTS.judgeFart)
       ]);
-
     requestAnimationFrame(loop);
   })();
 
-  // ---- Loop ----
   let last = 0;
   function loop(ts){
     const dt = (ts - last) || 16.67; last = ts;
-
     if (player.state !== 'fart'){
       if (hold.left && !hold.right){ player.x -= SPEED*dt; player.facing = -1; player.state = 'walk'; }
       else if (hold.right && !hold.left){ player.x += SPEED*dt; player.facing = 1; player.state = 'walk'; }
       else { player.state = 'idle'; }
     }
-
     const half = Math.round((FRAME_W * SPRITE_SCALE) / 2);
     player.x = Math.max(half, Math.min(canvas.width - half, player.x));
-
     player.anim += dt; chimp.anim += dt; mole.anim += dt;
-
     render();
     requestAnimationFrame(loop);
   }
@@ -238,10 +236,8 @@
   function render(){
     if (Images.bg) ctx.drawImage(Images.bg, 0, 0, canvas.width, canvas.height);
     else { ctx.fillStyle = '#1d1f29'; ctx.fillRect(0,0,canvas.width,canvas.height); }
-
     if (Images.chimpIdle) drawSeq(Images.chimpIdle, chimp.anim, chimp.x, chimp.y, 1, 140);
     if (Images.moleIdle)  drawSeq(Images.moleIdle,  mole.anim,  mole.x,  mole.y, 1, 140);
-
     if (player.state === 'walk' && Images.judgeWalk){
       drawSeq(Images.judgeWalk, player.anim, player.x, player.y, player.facing, 120);
     } else if (player.state === 'fart' && Images.judgeFart){
@@ -252,12 +248,9 @@
       ctx.fillStyle = '#8338EC'; ctx.fillRect(player.x-22, player.y-60, 44, 60);
       ctx.fillStyle = '#e7e7e7'; ctx.fillRect(player.x-22, player.y-66, 44, 6);
     }
-
     const active = closestInRange();
     if (active === chimp)  drawNamePlate(chimp.x, chimp.y, chimp.label);
     if (active === mole)   drawNamePlate(mole.x,  mole.y,  mole.label);
-
-    // tiny “Leo” under the judge (always)
     drawTinyTagBelow(player.x, player.y, 'Leo');
   }
 
@@ -269,24 +262,18 @@
     return near.reduce((a,b)=> Math.abs(player.x-a.x) < Math.abs(player.x-b.x) ? a : b);
   }
 
-  // ---- Interaction ----
   function tryInteract(cx, cy){
     const target = closestInRange();
     if (!target) return;
-
     const halfW = Math.round((FRAME_W * SPRITE_SCALE) / 2);
     const topY  = GROUND_Y - Math.round(FRAME_H * SPRITE_SCALE);
     const within =
       (cx >= target.x - halfW) && (cx <= target.x + halfW) &&
       (cy >= topY) && (cy <= GROUND_Y);
-
     if (!within) return;
-
-    // Face the opposite direction when farting (left walk → face right, etc.)
     player.facing = -player.facing;
     player.state = 'fart';
     player.anim = 0;
-
     let ended = false;
     const endFart = ()=>{
       if (ended) return;
@@ -295,7 +282,6 @@
       if (player.fartTimer){ clearTimeout(player.fartTimer); player.fartTimer = null; }
       if (fartAudio){ fartAudio.onended = null; }
     };
-
     if (fartAudio){
       try {
         fartAudio.currentTime = 0;
